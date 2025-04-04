@@ -350,9 +350,7 @@ from threading import Thread
 from queue import Queue
 import string
 import itertools
-from typing import List, Optional, Set, Union, Dict
-import unicodedata
-from unidecode import unidecode
+from typing import List, Optional, Union, Dict
 import re
 
 class Scout:
@@ -371,23 +369,62 @@ class Scout:
         self.num_threads = num_threads
         self.num_bulk_threads = num_bulk_threads
         self.smtp_timeout = smtp_timeout
+        self.mx_cache = {}
 
-    def check_smtp(self, email: str, port: int = 25) -> Dict[str, Union[str, int]]:
-        domain = email.split('@')[1]
+    def get_mx_record(self, domain: str) -> str:
+        """Fetch and cache MX records for a domain."""
+        if domain in self.mx_cache:
+            return self.mx_cache[domain]
+        
         try:
             records = dns.resolver.resolve(domain, 'MX')
             mx_record = str(records[0].exchange)
-            with smtplib.SMTP(mx_record, port, timeout=self.smtp_timeout) as server:
-                server.set_debuglevel(0)
-                server.ehlo("example.com")
-                server.mail('test@example.com')
-                code, message = server.rcpt(email)
-            
-            return {"email": email, "status": "found", "message": "Accepted", "user_name": email.split('@')[0], "domain": domain, "mx": mx_record, "connections": 1, "ver_ops": 1, "time_exec": 1.2}
-        except Exception as e:
-            return {"email": "", "status": "not_found", "message": "Rejected", "user_name": email.split('@')[0], "domain": domain, "mx": "", "connections": 0, "ver_ops": 0, "time_exec": 0.0}
+            self.mx_cache[domain] = mx_record
+            return mx_record
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
+            return ""
 
-    def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> List[Dict[str, Union[str, int]]]:
+    def check_smtp(self, email: str, port: int = 25) -> Dict[str, Union[str, int]]:
+        """Verify if an email exists via SMTP handshake."""
+        domain = email.split('@')[-1]
+        mx_record = self.get_mx_record(domain)
+
+        if not mx_record:
+            return {
+                "email": email, "status": "not_found", "message": "No MX record",
+                "user_name": email.split('@')[0], "domain": domain, "mx": "",
+                "connections": 0, "ver_ops": 0, "time_exec": 0.0
+            }
+
+        try:
+            with smtplib.SMTP(mx_record, port, timeout=self.smtp_timeout) as server:
+                server.ehlo("example.com")
+                server.mail("test@example.com")  # Fake sender
+                code, _ = server.rcpt(email)
+
+            return {
+                "email": email, "status": "found" if code == 250 else "not_found", "message": "Accepted" if code == 250 else "Rejected",
+                "user_name": email.split('@')[0], "domain": domain, "mx": mx_record,
+                "connections": 1, "ver_ops": 1, "time_exec": 1.2
+            }
+        except Exception:
+            return {
+                "email": email, "status": "not_found", "message": "SMTP error",
+                "user_name": email.split('@')[0], "domain": domain, "mx": "",
+                "connections": 0, "ver_ops": 0, "time_exec": 0.0
+            }
+
+    def generate_email_variations(self, names: List[str], domain: str) -> List[str]:
+        """Generate common email patterns."""
+        first, last = (names + [""])[:2]
+        patterns = [
+            f"{first}.{last}@{domain}", f"{first}{last}@{domain}", f"{first}@{domain}",
+            f"{first}{last[0]}@{domain}", f"{first[0]}{last}@{domain}"
+        ]
+        return [email.lower() for email in patterns if first]
+
+    def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> Dict:
+        """Find valid emails for a domain based on name patterns."""
         email_results = []
         email_variants = []
         generated_mails = []
@@ -397,12 +434,9 @@ class Scout:
                 names = names.split(" ")
             if isinstance(names, list) and names and isinstance(names[0], list):
                 for name_list in names:
-                    assert isinstance(name_list, list)
-                    name_list = self.split_list_data(name_list)
-                    email_variants.extend(self.generate_email_variants(name_list, domain, normalize=self.normalize))
+                    email_variants.extend(self.generate_email_variations(self.split_list_data(name_list), domain))
             else:
-                names = self.split_list_data(names)
-                email_variants = self.generate_email_variants(names, domain, normalize=self.normalize)
+                email_variants = self.generate_email_variations(self.split_list_data(names), domain)
 
         if self.check_prefixes and not names:
             generated_mails = self.generate_prefixes(domain)
@@ -411,24 +445,42 @@ class Scout:
 
         for email in all_emails:
             result = self.check_smtp(email)
-            email_results.append(result)
+            if result["status"] == "found":
+                email_results.append(result)
+                break  # Stop checking once a valid email is found
 
         if not email_results:
-            email_results.append({"email": "", "status": "not_found", "message": "Rejected", "user_name": "", "domain": domain, "mx": "", "connections": 0, "ver_ops": 0, "time_exec": 0.0})
+            email_results.append({
+                "email": "", "status": "not_found", "message": "Rejected",
+                "user_name": "N/A", "domain": domain, "mx": self.get_mx_record(domain),
+                "connections": 0, "ver_ops": 0, "time_exec": 0.0
+            })
         
-        return email_results
+        return {"domain": domain, "valid_emails": email_results}
 
     def find_valid_emails_bulk(self, email_data: List[Dict[str, Union[str, List[str]]]]) -> List[Dict[str, Union[str, List[str], List[Dict[str, str]]]]]:
+        """Find valid emails in bulk."""
         all_valid_emails = []
+
         for data in email_data:
             domain = data.get("domain")
             names = data.get("names", [])
             valid_emails = self.find_valid_emails(domain, names)
-            all_valid_emails.append({"domain": domain, "names": names, "valid_emails": valid_emails})
+            all_valid_emails.append(valid_emails)
+
         return all_valid_emails
 
-    def split_list_data(self, target):
-        new_target = []
-        for i in target:
-            new_target.extend(i.split(" "))
-        return new_target
+    def split_list_data(self, target: List[str]) -> List[str]:
+        """Split names into individual words."""
+        return [word for i in target for word in i.split(" ")]
+
+# Example Usage
+if __name__ == "__main__":
+    finder = Scout()
+    email_data = [
+        {"domain": "example.com", "names": ["John Doe"]},
+        {"domain": "test.com", "names": ["Jane Smith"]}
+    ]
+    
+    result = finder.find_valid_emails_bulk(email_data)
+    print(result)
