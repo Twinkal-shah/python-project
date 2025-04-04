@@ -351,7 +351,7 @@ from threading import Thread
 from queue import Queue
 import string
 import itertools
-from typing import List, Optional, Set, Union, Dict
+from typing import List, Optional, Union, Dict
 import unicodedata
 from unidecode import unidecode
 import re
@@ -419,57 +419,63 @@ class Scout:
         """
         Find valid email addresses for a given domain and return detailed verification data.
         """
-        if self.check_catchall and self.check_email_catchall(domain):
+        try:
+            if self.check_catchall and self.check_email_catchall(domain):
+                return []
+
+            valid_emails = []
+            email_variants = []
+            generated_mails = []
+
+            if self.check_variants and names:
+                if isinstance(names, str):
+                    names = names.split(" ")
+                if isinstance(names, list) and names and isinstance(names[0], list):
+                    for name_list in names:
+                        name_list = self.split_list_data(name_list)
+                        email_variants.extend(self.generate_email_variants(name_list, domain, normalize=self.normalize))
+                else:
+                    names = self.split_list_data(names)
+                    email_variants = self.generate_email_variants(names, domain, normalize=self.normalize)
+
+            if self.check_prefixes and not names:
+                generated_mails = self.generate_prefixes(domain)
+
+            all_emails = email_variants + generated_mails
+
+            def worker():
+                while True:
+                    email = q.get()
+                    if email is None:
+                        break
+                    try:
+                        result = self.check_smtp(email)
+                        valid_emails.append(result)
+                    except Exception as e:
+                        print(f"Error processing {email}: {e}")
+                    finally:
+                        q.task_done()
+
+            q = Queue()
+            threads = []
+
+            for _ in range(self.num_threads):
+                t = Thread(target=worker)
+                t.start()
+                threads.append(t)
+
+            for email in all_emails:
+                q.put(email)
+
+            q.join()
+
+            for _ in range(self.num_threads):
+                q.put(None)
+            for t in threads:
+                t.join()
+
+            return valid_emails
+
+        except Exception as e:
+            print(f"Error in find_valid_emails: {e}")
             return []
-
-        valid_emails = []
-        email_variants = []
-        generated_mails = []
-
-        if self.check_variants and names:
-            if isinstance(names, str):
-                names = names.split(" ")
-            if isinstance(names, list) and names and isinstance(names[0], list):
-                for name_list in names:
-                    name_list = self.split_list_data(name_list)
-                    email_variants.extend(self.generate_email_variants(name_list, domain, normalize=self.normalize))
-            else:
-                names = self.split_list_data(names)
-                email_variants = self.generate_email_variants(names, domain, normalize=self.normalize)
-
-        if self.check_prefixes and not names:
-            generated_mails = self.generate_prefixes(domain)
-
-        all_emails = email_variants + generated_mails
-
-        def worker():
-            while True:
-                email = q.get()
-                if email is None:
-                    break
-                try:
-                    result = self.check_smtp(email)
-                    valid_emails.append(result)
-                except Exception as e:
-                    print(f"Error processing {email}: {e}")
-                finally:
-                    q.task_done()
-
-        q = Queue()
-        threads = []
-        for _ in range(self.num_threads):
-            t = Thread(target=worker)
-            t.start()
-            threads.append(t)
-
-        for email in all_emails:
-            q.put(email)
-
-        q.join()
-
-        for _ in range(self.num_threads):
-            q.put(None)
-        for t in threads:
-            t.join()
-
-        return valid_emails
