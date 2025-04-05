@@ -560,19 +560,19 @@ class Scout:
                     "time_exec": time_exec
                 }
 
-        # except Exception:
-        #     time_exec = round(time.time() - start_time, 3)
-        #     return {
-        #         "email": "",
-        #         "status": "not_found",
-        #         "message": "Rejected",
-        #         "user_name": user_name,
-        #         "domain": domain,
-        #         "mx": mx_record,
-        #         "connections": connections,
-        #         "ver_ops": ver_ops,
-        #         "time_exec": time_exec
-        #     }
+        except Exception:
+            time_exec = round(time.time() - start_time, 3)
+            return {
+                "email": "",
+                "status": "not_found",
+                "message": "Rejected",
+                "user_name": user_name,
+                "domain": domain,
+                "mx": mx_record,
+                "connections": connections,
+                "ver_ops": ver_ops,
+                "time_exec": time_exec
+            }
 
     def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> List[Dict[str, Union[str, int]]]:
         email_results = []
