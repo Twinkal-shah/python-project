@@ -494,13 +494,10 @@ import dns.resolver
 import random
 from threading import Thread
 from queue import Queue
-import string
-import itertools
-from typing import List, Optional, Set, Union, Dict
-import unicodedata
+from typing import List, Optional, Union, Dict
 from unidecode import unidecode
-import re
 import time
+
 
 class Scout:
     def __init__(self, 
@@ -524,10 +521,12 @@ class Scout:
         ver_ops = 0
         connections = 0
         start_time = time.time()
+
         try:
             records = dns.resolver.resolve(domain, 'MX')
             mx_record = str(records[0].exchange).rstrip('.')
             connections += 1
+
             with smtplib.SMTP(mx_record, port, timeout=self.smtp_timeout) as server:
                 server.set_debuglevel(0)
                 server.ehlo("blu-harvest.com")
@@ -535,7 +534,9 @@ class Scout:
                 ver_ops += 1
                 code, message = server.rcpt(email)
                 ver_ops += 1
+
             time_exec = round(time.time() - start_time, 3)
+
             return {
                 "email": email,
                 "status": "found" if code == 250 else "not_found",
@@ -547,6 +548,7 @@ class Scout:
                 "ver_ops": ver_ops,
                 "time_exec": time_exec
             }
+
         except Exception as e:
             time_exec = round(time.time() - start_time, 3)
             return {
@@ -560,6 +562,36 @@ class Scout:
                 "ver_ops": ver_ops,
                 "time_exec": time_exec
             }
+
+    def generate_email_variants(self, name_list: List[str], domain: str, normalize: bool = True) -> List[str]:
+        first = name_list[0].lower()
+        last = name_list[-1].lower() if len(name_list) > 1 else ""
+        if normalize:
+            first = unidecode(first)
+            last = unidecode(last)
+
+        patterns = [
+            f"{first}@{domain}",
+            f"{first[0]}{last}@{domain}" if last else "",
+            f"{first}.{last}@{domain}" if last else "",
+            f"{first}_{last}@{domain}" if last else "",
+            f"{last}.{first}@{domain}" if last else "",
+            f"{first}{last}@{domain}" if last else "",
+            f"{last}{first}@{domain}" if last else "",
+            f"{first[0]}.{last}@{domain}" if last else "",
+        ]
+
+        return list(set(filter(None, patterns)))
+
+    def generate_prefixes(self, domain: str) -> List[str]:
+        prefixes = ["admin", "contact", "hello", "support", "team", "info"]
+        return [f"{p}@{domain}" for p in prefixes]
+
+    def split_list_data(self, target):
+        new_target = []
+        for i in target:
+            new_target.extend(i.split(" "))
+        return new_target
 
     def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> List[Dict[str, Union[str, int, float]]]:
         email_results = []
@@ -612,8 +644,3 @@ class Scout:
             all_valid_emails.append({"domain": domain, "names": names, "valid_emails": valid_emails})
         return all_valid_emails
 
-    def split_list_data(self, target):
-        new_target = []
-        for i in target:
-            new_target.extend(i.split(" "))
-        return new_target
