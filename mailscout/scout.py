@@ -593,54 +593,43 @@ class Scout:
             new_target.extend(i.split(" "))
         return new_target
 
-    def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> List[Dict[str, Union[str, int, float]]]:
-        email_results = []
-        email_variants = []
-        generated_mails = []
+    def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> Dict[str, Union[str, int, float, None]]:
+    email_variants = []
+    generated_mails = []
 
-        if self.check_variants and names:
-            if isinstance(names, str):
-                names = names.split(" ")
-            if isinstance(names, list) and names and isinstance(names[0], list):
-                for name_list in names:
-                    assert isinstance(name_list, list)
-                    name_list = self.split_list_data(name_list)
-                    email_variants.extend(self.generate_email_variants(name_list, domain, normalize=self.normalize))
-            else:
-                names = self.split_list_data(names)
-                email_variants = self.generate_email_variants(names, domain, normalize=self.normalize)
+    if self.check_variants and names:
+        if isinstance(names, str):
+            names = names.split(" ")
+        if isinstance(names, list) and names and isinstance(names[0], list):
+            for name_list in names:
+                name_list = self.split_list_data(name_list)
+                email_variants.extend(self.generate_email_variants(name_list, domain, normalize=self.normalize))
+        else:
+            names = self.split_list_data(names)
+            email_variants = self.generate_email_variants(names, domain, normalize=self.normalize)
 
-        if self.check_prefixes and not names:
-            generated_mails = self.generate_prefixes(domain)
+    if self.check_prefixes and not names:
+        generated_mails = self.generate_prefixes(domain)
 
-        all_emails = email_variants + generated_mails
+    all_emails = email_variants + generated_mails
 
-        for email in all_emails:
-            result = self.check_smtp(email)
-            email_results.append(result)
-            time.sleep(random.uniform(1.0, 2.0))  # Delay between SMTP checks
+    for email in all_emails:
+        result = self.check_smtp(email)
+        time.sleep(random.uniform(1.0, 2.0))
+        if result["status"] == "found":
+            result["status"] = "valid"
+            return result
 
-        if not email_results:
-            email_results.append({
-                "email": "",
-                "status": "not_found",
-                "message": "Rejected",
-                "user_name": "",
-                "domain": domain,
-                "mx": "",
-                "connections": 0,
-                "ver_ops": 0,
-                "time_exec": 0.0
-            })
-
-        return email_results
-
-    def find_valid_emails_bulk(self, email_data: List[Dict[str, Union[str, List[str]]]]) -> List[Dict[str, Union[str, List[str], List[Dict[str, Union[str, int, float]]]]]]:
-        all_valid_emails = []
-        for data in email_data:
-            domain = data.get("domain")
-            names = data.get("names", [])
-            valid_emails = self.find_valid_emails(domain, names)
-            all_valid_emails.append({"domain": domain, "names": names, "valid_emails": valid_emails})
-        return all_valid_emails
+    # If no valid email found, return one clean result
+    return {
+        "email": None,
+        "status": "invalid",
+        "message": "No valid email found",
+        "user_name": "",
+        "domain": domain,
+        "mx": "",
+        "connections": 0,
+        "ver_ops": 0,
+        "time_exec": 0.0
+    }
 
