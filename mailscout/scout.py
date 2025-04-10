@@ -492,15 +492,10 @@
 import smtplib
 import dns.resolver
 import random
-from threading import Thread
-from queue import Queue
 import string
-import itertools
-from typing import List, Optional, Set, Union, Dict
-import unicodedata
-from unidecode import unidecode
-import re
 import time
+from typing import List, Optional, Union, Dict
+from unidecode import unidecode
 
 class Scout:
     def __init__(self, 
@@ -519,47 +514,99 @@ class Scout:
         self.num_bulk_threads = num_bulk_threads
         self.smtp_timeout = smtp_timeout
 
-    def check_smtp(self, email: str, port: int = 25) -> Dict[str, Union[str, int, float]]:
+    def check_smtp(self, email: str, port: int = 25) -> Dict[str, Union[str, int, float, bool]]:
         domain = email.split('@')[1]
         ver_ops = 0
         connections = 0
+        catch_all_flag = False
+        mx_record = ""
         start_time = time.time()
+
         try:
             records = dns.resolver.resolve(domain, 'MX')
-            mx_record = str(records[0].exchange).rstrip('.')
-            connections += 1
-            with smtplib.SMTP(mx_record, port, timeout=self.smtp_timeout) as server:
-                server.set_debuglevel(0)
-                server.ehlo("blu-harvest.com")
-                server.mail('noreply@blu-harvest.com')
-                ver_ops += 1
-                code, message = server.rcpt(email)
-                ver_ops += 1
+            mx_hosts = [str(r.exchange).rstrip('.') for r in records]
+
+            for mx in mx_hosts:
+                try:
+                    with smtplib.SMTP(mx, port, timeout=self.smtp_timeout) as server:
+                        connections += 1
+                        server.set_debuglevel(0)
+                        server.ehlo("blu-harvest.com")
+                        server.mail('noreply@blu-harvest.com')
+                        ver_ops += 1
+                        code, message = server.rcpt(email)
+                        ver_ops += 1
+                        mx_record = mx
+
+                        if code == 250:
+                            if self.check_catchall:
+                                catch_all_flag = self.is_catch_all(domain, mx)
+                            status = "risky" if catch_all_flag else "valid"
+                            msg = "Catch-All" if catch_all_flag else f"{code} {message.decode()}"
+                        else:
+                            status = "invalid"
+                            msg = f"{code} {message.decode()}"
+
+                        time_exec = round(time.time() - start_time, 3)
+                        return {
+                            "email": email,
+                            "status": status,
+                            "catch_all": catch_all_flag,
+                            "message": msg,
+                            "user_name": email.split('@')[0].replace('.', ' ').title(),
+                            "domain": domain,
+                            "mx": mx_record,
+                            "connections": connections,
+                            "ver_ops": ver_ops,
+                            "time_exec": time_exec
+                        }
+                except Exception:
+                    connections += 1
+                    continue
+
+            # All MX failed or rejected
             time_exec = round(time.time() - start_time, 3)
             return {
                 "email": email,
-                "status": "valid" if code == 250 else "invalid",
-                "message": f"{code} {message.decode()}",
+                "status": "invalid",
+                "catch_all": False,
+                "message": "SMTP failed for all MX records & ports",
                 "user_name": email.split('@')[0].replace('.', ' ').title(),
                 "domain": domain,
-                "mx": mx_record,
+                "mx": "",
                 "connections": connections,
                 "ver_ops": ver_ops,
                 "time_exec": time_exec
             }
+
         except Exception as e:
             time_exec = round(time.time() - start_time, 3)
             return {
-                "email": "",
+                "email": email,
                 "status": "invalid",
+                "catch_all": False,
                 "message": f"Rejected: {str(e)}",
-                "user_name": email.split('@')[0].replace('.', ' ').title() if email else "",
+                "user_name": email.split('@')[0].replace('.', ' ').title(),
                 "domain": domain,
-                "mx": mx_record if 'mx_record' in locals() else "",
+                "mx": "",
                 "connections": connections,
                 "ver_ops": ver_ops,
                 "time_exec": time_exec
             }
+
+    def is_catch_all(self, domain: str, mx_record: str) -> bool:
+        fake_user = ''.join(random.choices(string.ascii_lowercase, k=12))
+        fake_email = f"{fake_user}@{domain}"
+
+        try:
+            with smtplib.SMTP(mx_record, 25, timeout=self.smtp_timeout) as server:
+                server.set_debuglevel(0)
+                server.ehlo("blu-harvest.com")
+                server.mail("noreply@blu-harvest.com")
+                code, _ = server.rcpt(fake_email)
+                return code == 250
+        except Exception:
+            return False
 
     def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> Dict[str, Union[str, int, float, None]]:
         email_variants = []
@@ -584,13 +631,13 @@ class Scout:
         for email in all_emails:
             result = self.check_smtp(email)
             time.sleep(random.uniform(1.0, 2.0))  # Delay between SMTP checks
-            if result["status"] == "valid":
+            if result["status"] in ["valid", "risky"]:
                 return result
 
-        # If no valid email found
         return {
             "email": None,
             "status": "invalid",
+            "catch_all": False,
             "message": "No valid email found",
             "user_name": "",
             "domain": domain,
@@ -641,5 +688,3 @@ class Scout:
     def generate_prefixes(self, domain: str) -> List[str]:
         prefixes = ['admin', 'contact', 'hello', 'team', 'support', 'info', 'mail']
         return [f"{prefix}@{domain}" for prefix in prefixes]
-
-
