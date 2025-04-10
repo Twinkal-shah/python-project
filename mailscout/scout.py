@@ -519,48 +519,47 @@ class Scout:
         self.num_bulk_threads = num_bulk_threads
         self.smtp_timeout = smtp_timeout
 
-    def check_smtp(self, email: str, port: int = 25, from_address: str = "verify@mailscout.io") -> Dict[str, Union[str, int, float]]:
-    domain = email.split('@')[1]
-    ver_ops = 0
-    connections = 0
-    start_time = time.time()
-    try:
-        records = dns.resolver.resolve(domain, 'MX')
-        mx_record = str(records[0].exchange).rstrip('.')
-        connections += 1
-        with smtplib.SMTP(mx_record, port, timeout=self.smtp_timeout) as server:
-            server.set_debuglevel(0)
-            server.ehlo("mailscout.io")
-            server.mail(from_address)  # ✅ Updated to use a configurable sender address
-            ver_ops += 1
-            code, message = server.rcpt(email)
-            ver_ops += 1
-        time_exec = round(time.time() - start_time, 3)
-        return {
-            "email": email,
-            "status": "valid" if code == 250 else "invalid",
-            "message": f"{code} {message.decode()}",
-            "user_name": email.split('@')[0].replace('.', ' ').title(),
-            "domain": domain,
-            "mx": mx_record,
-            "connections": connections,
-            "ver_ops": ver_ops,
-            "time_exec": time_exec
-        }
-    except Exception as e:
-        time_exec = round(time.time() - start_time, 3)
-        return {
-            "email": "",
-            "status": "invalid",
-            "message": f"Rejected: {str(e)}",
-            "user_name": email.split('@')[0].replace('.', ' ').title() if email else "",
-            "domain": domain,
-            "mx": mx_record if 'mx_record' in locals() else "",
-            "connections": connections,
-            "ver_ops": ver_ops,
-            "time_exec": time_exec
-        }
-
+    def check_smtp(self, email: str, port: int = 25) -> Dict[str, Union[str, int, float]]:
+        domain = email.split('@')[1]
+        ver_ops = 0
+        connections = 0
+        start_time = time.time()
+        try:
+            records = dns.resolver.resolve(domain, 'MX')
+            mx_record = str(records[0].exchange).rstrip('.')
+            connections += 1
+            with smtplib.SMTP(mx_record, port, timeout=self.smtp_timeout) as server:
+                server.set_debuglevel(0)
+                server.ehlo("blu-harvest.com")
+                server.mail('noreply@blu-harvest.com')
+                ver_ops += 1
+                code, message = server.rcpt(email)
+                ver_ops += 1
+            time_exec = round(time.time() - start_time, 3)
+            return {
+                "email": email,
+                "status": "valid" if code == 250 else "invalid",
+                "message": f"{code} {message.decode()}",
+                "user_name": email.split('@')[0].replace('.', ' ').title(),
+                "domain": domain,
+                "mx": mx_record,
+                "connections": connections,
+                "ver_ops": ver_ops,
+                "time_exec": time_exec
+            }
+        except Exception as e:
+            time_exec = round(time.time() - start_time, 3)
+            return {
+                "email": "",
+                "status": "invalid",
+                "message": f"Rejected: {str(e)}",
+                "user_name": email.split('@')[0].replace('.', ' ').title() if email else "",
+                "domain": domain,
+                "mx": mx_record if 'mx_record' in locals() else "",
+                "connections": connections,
+                "ver_ops": ver_ops,
+                "time_exec": time_exec
+            }
 
     def find_valid_emails(self, domain: str, names: Optional[Union[str, List[str], List[List[str]]]] = None) -> Dict[str, Union[str, int, float, None]]:
         email_variants = []
