@@ -667,23 +667,40 @@ class Scout:
         return new_target
 
     def generate_email_variants(self, names: List[str], domain: str, normalize: bool = True) -> List[str]:
-        if normalize:
-            names = [unidecode(n).lower().strip() for n in names if n]
-        first, last = names[0], names[-1] if len(names) > 1 else ("", names[0])
-        patterns = [
-            f"{first}@{domain}",
-            f"{first}{last}@{domain}",
-            f"{first}.{last}@{domain}",
-            f"{first}_{last}@{domain}",
-            f"{last}.{first}@{domain}",
-            f"{first[0]}{last}@{domain}",
-            f"{first[0]}.{last}@{domain}",
-            f"{first}{last[0]}@{domain}",
-            f"{first[0]}{last[0]}@{domain}",
-            f"{last}{first}@{domain}",
-            f"{last}@{domain}"
-        ]
-        return list(set(patterns))
+    if normalize:
+        names = [unidecode(n).lower().strip() for n in names if n]
+
+    first = names[0]
+    last = names[-1] if len(names) > 1 else ""
+    f = first[0] if first else ""
+    l = last[0] if last else ""
+
+    patterns = [
+        f"{first}@{domain}",
+        f"{last}@{domain}",
+        f"{first}{last}@{domain}",
+        f"{first}.{last}@{domain}",
+        f"{first}_{last}@{domain}",
+        f"{first}-{last}@{domain}",
+        f"{f}{last}@{domain}",
+        f"{first}{l}@{domain}",
+        f"{f}.{last}@{domain}",
+        f"{first}.{l}@{domain}",
+        f"{f}_{last}@{domain}",
+        f"{f}-{last}@{domain}",
+        f"{last}{f}@{domain}",
+        f"{last}.{first}@{domain}",
+        f"{last}_{first}@{domain}",
+        f"{last}-{first}@{domain}",
+        f"{f}{l}@{domain}",
+        f"{f}.{l}@{domain}",
+        f"{f}_{l}@{domain}",
+        f"{first}{last}{random.randint(1, 99)}@{domain}",  # slight randomization
+        f"{first[0]}{last}{random.randint(10, 99)}@{domain}",
+    ]
+
+    return list(set(patterns))  # remove duplicates
+
 
     def generate_prefixes(self, domain: str) -> List[str]:
         prefixes = ['admin', 'contact', 'hello', 'team', 'support', 'info', 'mail']
