@@ -496,17 +496,16 @@ import string
 import time
 from typing import List, Optional, Union, Dict
 from unidecode import unidecode
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class Scout:
-    def __init__(self,
-                 check_variants: bool = True,
-                 check_prefixes: bool = True,
-                 check_catchall: bool = True,
-                 normalize: bool = True,
-                 num_threads: int = 5,
-                 num_bulk_threads: int = 1,
-                 smtp_timeout: int = 2) -> None:
+    def __init__(self, 
+            check_variants: bool = True, 
+            check_prefixes: bool = True, 
+            check_catchall: bool = True,
+            normalize: bool = True,
+            num_threads: int = 5,
+            num_bulk_threads: int = 1,
+            smtp_timeout: int = 2) -> None:
         self.check_variants = check_variants
         self.check_prefixes = check_prefixes
         self.check_catchall = check_catchall
@@ -565,6 +564,7 @@ class Scout:
                     connections += 1
                     continue
 
+            # All MX failed or rejected
             time_exec = round(time.time() - start_time, 3)
             return {
                 "email": email,
@@ -597,6 +597,7 @@ class Scout:
     def is_catch_all(self, domain: str, mx_record: str) -> bool:
         fake_user = ''.join(random.choices(string.ascii_lowercase, k=12))
         fake_email = f"{fake_user}@{domain}"
+
         try:
             with smtplib.SMTP(mx_record, 25, timeout=self.smtp_timeout) as server:
                 server.set_debuglevel(0)
@@ -627,13 +628,11 @@ class Scout:
 
         all_emails = email_variants + generated_mails
 
-        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
-            future_to_email = {executor.submit(self.check_smtp, email): email for email in all_emails}
-
-            for future in as_completed(future_to_email):
-                result = future.result()
-                if result["status"] in ["valid", "risky"]:
-                    return result
+        for email in all_emails:
+            result = self.check_smtp(email)
+            time.sleep(random.uniform(1.0, 2.0))  # Delay between SMTP checks
+            if result["status"] in ["valid", "risky"]:
+                return result
 
         return {
             "email": None,
@@ -650,17 +649,15 @@ class Scout:
 
     def find_valid_emails_bulk(self, email_data: List[Dict[str, Union[str, List[str]]]]) -> List[Dict[str, Union[str, List[str], Dict[str, Union[str, int, float, None]]]]]:
         all_valid_emails = []
-        with ThreadPoolExecutor(max_workers=self.num_bulk_threads) as executor:
-            future_to_data = {executor.submit(self.find_valid_emails, data['domain'], data.get('names', [])): data for data in email_data}
-
-            for future in as_completed(future_to_data):
-                data = future_to_data[future]
-                valid_email = future.result()
-                all_valid_emails.append({
-                    "domain": data['domain'],
-                    "names": data.get('names', []),
-                    "valid_email": valid_email
-                })
+        for data in email_data:
+            domain = data.get("domain")
+            names = data.get("names", [])
+            valid_email = self.find_valid_emails(domain, names)
+            all_valid_emails.append({
+                "domain": domain,
+                "names": names,
+                "valid_email": valid_email
+            })
         return all_valid_emails
 
     def split_list_data(self, target):
@@ -672,40 +669,20 @@ class Scout:
     def generate_email_variants(self, names: List[str], domain: str, normalize: bool = True) -> List[str]:
         if normalize:
             names = [unidecode(n).lower().strip() for n in names if n]
-
-        first = names[0]
-        last = names[-1] if len(names) > 1 else ""
-        f = first[0] if first else ""
-        l = last[0] if last else ""
-
+        first, last = names[0], names[-1] if len(names) > 1 else ("", names[0])
         patterns = [
             f"{first}@{domain}",
-            f"{last}@{domain}",
             f"{first}{last}@{domain}",
             f"{first}.{last}@{domain}",
             f"{first}_{last}@{domain}",
-            f"{first}-{last}@{domain}",
-            f"{f}{last}@{domain}",
-            f"{first}{l}@{domain}",
-            f"{f}.{last}@{domain}",
-            f"{first}.{l}@{domain}",
-            f"{f}_{last}@{domain}",
-            f"{f}-{last}@{domain}",
-            f"{last}{f}@{domain}",
             f"{last}.{first}@{domain}",
-            f"{last}_{first}@{domain}",
-            f"{last}-{first}@{domain}",
-            f"{f}{l}@{domain}",
-            f"{f}.{l}@{domain}",
-            f"{f}_{l}@{domain}",
-            f"{first}{random.randint(1, 99)}@{domain}",
-            f"{last}{random.randint(1, 99)}@{domain}",
-            f"{first}.{last}{random.randint(1, 99)}@{domain}",
-            f"{f}{last}{random.randint(1, 99)}@{domain}",
-            f"{first}{l}{random.randint(1, 99)}@{domain}",
-            f"{first}{last}{random.randint(10, 99)}@{domain}"
+            f"{first[0]}{last}@{domain}",
+            f"{first[0]}.{last}@{domain}",
+            f"{first}{last[0]}@{domain}",
+            f"{first[0]}{last[0]}@{domain}",
+            f"{last}{first}@{domain}",
+            f"{last}@{domain}"
         ]
-
         return list(set(patterns))
 
     def generate_prefixes(self, domain: str) -> List[str]:
