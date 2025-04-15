@@ -496,6 +496,7 @@ import string
 import time
 from typing import List, Optional, Union, Dict
 from unidecode import unidecode
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class Scout:
     def __init__(self,
@@ -626,11 +627,13 @@ class Scout:
 
         all_emails = email_variants + generated_mails
 
-        for email in all_emails:
-            result = self.check_smtp(email)
-            time.sleep(random.uniform(1.0, 2.0))  # Delay between SMTP checks
-            if result["status"] in ["valid", "risky"]:
-                return result
+        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+            future_to_email = {executor.submit(self.check_smtp, email): email for email in all_emails}
+
+            for future in as_completed(future_to_email):
+                result = future.result()
+                if result["status"] in ["valid", "risky"]:
+                    return result
 
         return {
             "email": None,
@@ -647,15 +650,17 @@ class Scout:
 
     def find_valid_emails_bulk(self, email_data: List[Dict[str, Union[str, List[str]]]]) -> List[Dict[str, Union[str, List[str], Dict[str, Union[str, int, float, None]]]]]:
         all_valid_emails = []
-        for data in email_data:
-            domain = data.get("domain")
-            names = data.get("names", [])
-            valid_email = self.find_valid_emails(domain, names)
-            all_valid_emails.append({
-                "domain": domain,
-                "names": names,
-                "valid_email": valid_email
-            })
+        with ThreadPoolExecutor(max_workers=self.num_bulk_threads) as executor:
+            future_to_data = {executor.submit(self.find_valid_emails, data['domain'], data.get('names', [])): data for data in email_data}
+
+            for future in as_completed(future_to_data):
+                data = future_to_data[future]
+                valid_email = future.result()
+                all_valid_emails.append({
+                    "domain": data['domain'],
+                    "names": data.get('names', []),
+                    "valid_email": valid_email
+                })
         return all_valid_emails
 
     def split_list_data(self, target):
