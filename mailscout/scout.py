@@ -496,16 +496,20 @@ import string
 import time
 from typing import List, Optional, Union, Dict
 from unidecode import unidecode
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 class Scout:
-    def __init__(self, 
-            check_variants: bool = True, 
-            check_prefixes: bool = True, 
-            check_catchall: bool = True,
-            normalize: bool = True,
-            num_threads: int = 5,
-            num_bulk_threads: int = 1,
-            smtp_timeout: int = 2) -> None:
+    def __init__(
+        self,
+        check_variants: bool = True,
+        check_prefixes: bool = True,
+        check_catchall: bool = True,
+        normalize: bool = True,
+        num_threads: int = 5,
+        num_bulk_threads: int = 3,
+        smtp_timeout: int = 2
+    ) -> None:
         self.check_variants = check_variants
         self.check_prefixes = check_prefixes
         self.check_catchall = check_catchall
@@ -564,7 +568,6 @@ class Scout:
                     connections += 1
                     continue
 
-            # All MX failed or rejected
             time_exec = round(time.time() - start_time, 3)
             return {
                 "email": email,
@@ -626,13 +629,17 @@ class Scout:
         if self.check_prefixes and not names:
             generated_mails = self.generate_prefixes(domain)
 
-        all_emails = email_variants + generated_mails
+        all_emails = list(set(email_variants + generated_mails))
 
-        for email in all_emails:
-            result = self.check_smtp(email)
-            time.sleep(random.uniform(1.0, 2.0))  # Delay between SMTP checks
-            if result["status"] in ["valid", "risky"]:
-                return result
+        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+            future_to_email = {executor.submit(self.check_smtp, email): email for email in all_emails}
+            for future in as_completed(future_to_email):
+                result = future.result()
+                if result["status"] in ["valid", "risky"]:
+                    for f in future_to_email:
+                        f.cancel()
+                    return result
+                time.sleep(random.uniform(0.5, 1.2))
 
         return {
             "email": None,
@@ -648,17 +655,19 @@ class Scout:
         }
 
     def find_valid_emails_bulk(self, email_data: List[Dict[str, Union[str, List[str]]]]) -> List[Dict[str, Union[str, List[str], Dict[str, Union[str, int, float, None]]]]]:
-        all_valid_emails = []
-        for data in email_data:
+        def worker(data):
             domain = data.get("domain")
             names = data.get("names", [])
             valid_email = self.find_valid_emails(domain, names)
-            all_valid_emails.append({
+            return {
                 "domain": domain,
                 "names": names,
                 "valid_email": valid_email
-            })
-        return all_valid_emails
+            }
+
+        with ThreadPoolExecutor(max_workers=self.num_bulk_threads) as executor:
+            futures = [executor.submit(worker, data) for data in email_data]
+            return [future.result() for future in as_completed(futures)]
 
     def split_list_data(self, target):
         new_target = []
